@@ -15,7 +15,7 @@ import {
   type Catalog,
   type VilaoModelConfig,
 } from "./catalog.js";
-import { readOverrides } from "./storage.js";
+import { readAuth, readOverrides } from "./storage.js";
 
 export const CATALOG_METADATA = "vilao_catalog";
 export const PAT_METADATA = "vilao_pat";
@@ -101,7 +101,16 @@ async function refreshCatalog(input: {
   }
 }
 
-function toProviderModel(model: VilaoModelConfig): Model {
+const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+function reasoningVariants(): Record<string, Record<string, unknown>> {
+  return Object.fromEntries(REASONING_EFFORTS.map((effort) => [
+    effort,
+    { reasoningEffort: effort },
+  ]));
+}
+
+export function toProviderModel(model: VilaoModelConfig): Model {
   const vision = model.modalities?.input.includes("image") ?? false;
   return {
     id: model.id,
@@ -113,10 +122,10 @@ function toProviderModel(model: VilaoModelConfig): Model {
     headers: {},
     options: {},
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-    limit: model.limit ?? { context: 128_000, output: 8_192 },
+    limit: model.limit ?? { context: 400_000, output: 32_000 },
     capabilities: {
       temperature: true,
-      reasoning: model.reasoning ?? false,
+      reasoning: model.reasoning ?? true,
       attachment: vision,
       toolcall: model.tool_call ?? false,
       input: { text: true, audio: false, image: vision, video: false, pdf: false },
@@ -124,7 +133,7 @@ function toProviderModel(model: VilaoModelConfig): Model {
       interleaved: false,
     },
     release_date: "",
-    variants: {},
+    variants: reasoningVariants(),
   };
 }
 
@@ -184,20 +193,46 @@ export const VilaoProviderPlugin: Plugin = async ({ client }) => ({
   provider: {
     id: PROVIDER_ID,
     models: async (provider: Provider, context) => {
-      if (context.auth?.type !== "api") return provider.models;
+      if (context.auth?.type !== "api") return {};
       const catalog = await refreshCatalog({ auth: context.auth, client });
       return modelsFromCatalog(catalog);
     },
   },
   config: async (config) => {
+    const auth = await readAuth();
+    const pat = clean(auth.metadata?.[PAT_METADATA]);
+    const apiKey = clean(auth.key);
+    if (!pat || !apiKey) return;
+
+    const cached = (() => {
+      const raw = auth.metadata?.[CATALOG_METADATA];
+      if (!raw) return undefined;
+      try {
+        return parseCatalog(JSON.parse(raw));
+      } catch {
+        return undefined;
+      }
+    })();
+    const catalog = await fetchCatalog(pat, apiKey).catch(() => cached);
+    if (!catalog) return;
+
     config.provider ??= {};
     const existing = asRecord(config.provider[PROVIDER_ID]);
+    const models = Object.fromEntries(Object.entries(applyOverrides(catalog.models, await readOverrides())).map(([id, model]) => {
+      const providerModel = toProviderModel(model);
+      return [id, {
+        ...model,
+        reasoning: providerModel.capabilities.reasoning,
+        limit: providerModel.limit,
+        variants: providerModel.variants,
+      }];
+    }));
     config.provider[PROVIDER_ID] = {
       ...existing,
       name: clean(existing.name) ?? DISPLAY_NAME,
       npm: clean(existing.npm) ?? "@ai-sdk/openai-compatible",
       options: { ...asRecord(existing.options), baseURL: BASE_URL },
-      models: asRecord(existing.models) as NonNullable<typeof config.provider>[string]["models"],
+      models: models as NonNullable<typeof config.provider>[string]["models"],
     };
   },
 });

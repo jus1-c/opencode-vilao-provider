@@ -83,12 +83,10 @@ function modelFromSubscription(value: unknown): VilaoModelConfig | undefined {
   const id = modelId(subscription);
   if (!id) return undefined;
   const options = asRecord(subscription.model_options);
-  const providerName = nonEmptyString(subscription.provider_name);
-  const rawModelId = nonEmptyString(subscription.model_id) ?? id;
   const vision = options.supports_vision === true;
   return {
     id,
-    name: providerName ? `${rawModelId} (${providerName})` : rawModelId,
+    name: id,
     reasoning: trueOrUndefined(options.supports_reasoning),
     tool_call: trueOrUndefined(options.supports_tools),
     modalities: {
@@ -153,8 +151,13 @@ export function applyOverrides(
     const context = override.limit?.context ?? model.limit?.context;
     const input = override.limit?.input ?? model.limit?.input;
     const output = override.limit?.output ?? model.limit?.output;
-    if (input && context && input > context) throw new Error(`Input limit exceeds context for ${id}`);
-    const limit = context && output ? { context, ...(input ? { input } : {}), output } : undefined;
+    const finalContext = context ?? 400_000;
+    if (input && finalContext && input > finalContext) throw new Error(`Input limit exceeds context for ${id}`);
+    const limit = context || output ? {
+      context: finalContext,
+      ...(input ? { input } : {}),
+      output: output ?? 32_000,
+    } : undefined;
     const vision = override.vision ?? model.modalities?.input.includes("image") ?? false;
     return [id, {
       ...model,
@@ -181,4 +184,22 @@ export function parseOverrides(value: unknown): OverridesFile {
   if (root.version !== 1) return { version: 1, models: {} };
   const models = Object.fromEntries(Object.entries(asRecord(root.models)).map(([id, override]) => [id, normalizeOverride(override)]));
   return { version: 1, models };
+}
+
+export function bootstrapModels(overrides: OverridesFile): Record<string, VilaoModelConfig> {
+  return Object.fromEntries(Object.entries(overrides.models).map(([id, value]) => {
+    const override = normalizeOverride(value);
+    const context = override.limit?.context;
+    const input = override.limit?.input;
+    const output = override.limit?.output;
+    const vision = override.vision ?? false;
+    return [id, {
+      id,
+      name: override.name ?? id,
+      ...(override.reasoning !== undefined ? { reasoning: override.reasoning } : {}),
+      ...(override.tool_call !== undefined ? { tool_call: override.tool_call } : {}),
+      modalities: { input: vision ? ["text", "image"] : ["text"], output: ["text"] },
+      ...(context && output ? { limit: { context, ...(input ? { input } : {}), output } } : {}),
+    }];
+  }));
 }

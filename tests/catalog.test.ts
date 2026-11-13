@@ -4,10 +4,12 @@ import test from "node:test";
 import {
   applyOverrides,
   ApiKeyMatchError,
+  bootstrapModels,
   catalogFromResponse,
   matchesMaskedKey,
   type OverridesFile,
 } from "../src/catalog.js";
+import { VilaoProviderPlugin } from "../src/server.js";
 
 const apiKey = "sk-50ee-middle-secret-698a";
 
@@ -88,4 +90,43 @@ test("rejects an input override above context", () => {
     version: 1,
     models: { "opt/model": { limit: { context: 100, input: 101, output: 10 } } },
   }), /cannot exceed context/u);
+});
+
+test("applies a context-only override with a default output", () => {
+  const models = { "opt/model": { id: "opt/model", name: "Model" } };
+  const result = applyOverrides(models, {
+    version: 1,
+    models: { "opt/model": { limit: { context: 400_000 } } },
+  });
+  assert.deepEqual(result["opt/model"].limit, { context: 400_000, output: 32_000 });
+});
+
+test("builds a pre-auth provider catalog from global overrides", () => {
+  const models = bootstrapModels({
+    version: 1,
+    models: {
+      "opt/gpt-5.6-sol": {
+        reasoning: true,
+        tool_call: true,
+        vision: true,
+        limit: { context: 420_000, output: 128_000 },
+      },
+    },
+  });
+
+  assert.deepEqual(models["opt/gpt-5.6-sol"], {
+    id: "opt/gpt-5.6-sol",
+    name: "opt/gpt-5.6-sol",
+    reasoning: true,
+    tool_call: true,
+    modalities: { input: ["text", "image"], output: ["text"] },
+    limit: { context: 420_000, output: 128_000 },
+  });
+});
+
+test("hides bootstrap models after OpenCode logout", async () => {
+  const plugin = await VilaoProviderPlugin({ client: {} } as Parameters<typeof VilaoProviderPlugin>[0]);
+  const models = await plugin.provider?.models?.({ models: { stale: {} } } as never, {});
+
+  assert.deepEqual(models, {});
 });
