@@ -37,7 +37,7 @@ action_check() {
 	latest=$(remote_head)
 	current=$(local_head)
 	if [ "$current" = "$latest" ]; then
-		status="up-to-date"
+		status="current"
 	else
 		status="update-available"
 	fi
