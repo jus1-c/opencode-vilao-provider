@@ -85,7 +85,7 @@ function toModelInfo(id, model) {
     cost: [],
     status: "active",
     enabled: true,
-    limit: model.limit ?? { context: 400_000, output: 32_000 },
+    limit: model.limit ?? { context: 512_000, output: 64_000 },
   };
 }
 

@@ -4,6 +4,8 @@ export const BASE_URL = "https://api.vilao.ai/v1";
 export const KEYS_URL = "https://vilao.ai/api/v2/llm/keys";
 export const OVERRIDES_FILE = "vilao-model-overrides.json";
 export const REFRESH_TTL_MS = 5 * 60_000;
+export const DEFAULT_CONTEXT = 512_000;
+export const DEFAULT_OUTPUT = 64_000;
 
 export type RecordValue = Record<string, unknown>;
 
@@ -151,12 +153,12 @@ export function applyOverrides(
     const context = override.limit?.context ?? model.limit?.context;
     const input = override.limit?.input ?? model.limit?.input;
     const output = override.limit?.output ?? model.limit?.output;
-    const finalContext = context ?? 400_000;
+    const finalContext = context ?? DEFAULT_CONTEXT;
     if (input && finalContext && input > finalContext) throw new Error(`Input limit exceeds context for ${id}`);
     const limit = context || output ? {
       context: finalContext,
       ...(input ? { input } : {}),
-      output: output ?? 32_000,
+      output: output ?? DEFAULT_OUTPUT,
     } : undefined;
     const vision = override.vision ?? model.modalities?.input.includes("image") ?? false;
     return [id, {

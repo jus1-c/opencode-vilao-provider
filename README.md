@@ -11,7 +11,7 @@ Subscription data refreshes on provider model discovery after a five-minute
 TTL. Temporary refresh failures keep the last successful catalog.
 
 Vilao's subscription response currently omits token limits. Models therefore
-use defaults of 400,000 context and 32,000 output tokens until you set exact
+use defaults of 512,000 context and 64,000 output tokens until you set exact
 values with `/vilao-model`. Reasoning is enabled by default, and every model
 exposes `low`, `medium`, `high`, `xhigh`, and `max` effort variants.
 

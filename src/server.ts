@@ -3,6 +3,8 @@ import type { Auth, Model, Provider } from "@opencode-ai/sdk/v2";
 
 import {
   BASE_URL,
+  DEFAULT_CONTEXT,
+  DEFAULT_OUTPUT,
   DISPLAY_NAME,
   KEYS_URL,
   PROVIDER_ID,
@@ -122,7 +124,7 @@ export function toProviderModel(model: VilaoModelConfig): Model {
     headers: {},
     options: {},
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-    limit: model.limit ?? { context: 400_000, output: 32_000 },
+    limit: model.limit ?? { context: DEFAULT_CONTEXT, output: DEFAULT_OUTPUT },
     capabilities: {
       temperature: true,
       reasoning: model.reasoning ?? true,

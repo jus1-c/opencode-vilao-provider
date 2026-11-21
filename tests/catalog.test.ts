@@ -98,7 +98,7 @@ test("applies a context-only override with a default output", () => {
     version: 1,
     models: { "opt/model": { limit: { context: 400_000 } } },
   });
-  assert.deepEqual(result["opt/model"].limit, { context: 400_000, output: 32_000 });
+  assert.deepEqual(result["opt/model"].limit, { context: 400_000, output: 64_000 });
 });
 
 test("builds a pre-auth provider catalog from global overrides", () => {

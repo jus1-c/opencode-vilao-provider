@@ -93,7 +93,7 @@ test("auto-fetches current subscriptions without reviving deleted override model
       reasoningEffort: "high",
     });
     assert.deepEqual(config.provider?.vilao?.models?.["live/model"]?.limit, {
-      context: 400_000, output: 32_000,
+      context: 512_000, output: 64_000,
     });
   } finally {
     globalThis.fetch = originalFetch;

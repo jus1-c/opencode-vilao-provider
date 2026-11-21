@@ -1,0 +1,121 @@
+#!/bin/sh
+# opencode-component-updater driver for the vilao-provider plugin.
+#
+# The component target IS the Git checkout, so the built-in "git" source driver
+# cannot be used: it requires a owned subdirectory below the component root.
+# This script stages the build output instead and leaves the checkout in place.
+#
+# shortcut: build runs in a scratch clone with bin links, and the staged
+# node_modules is installed separately with --no-bin-links because the updater
+# rejects symlinked staged trees. Revisit if a dependency ever needs a
+# postinstall step that writes outside node_modules.
+set -eu
+
+REPO_URL="https://github.com/jus1-c/opencode-vilao-provider.git"
+BRANCH="master"
+ENTRYPOINTS="server.js tui.js rpc.js"
+MANIFEST_PATHS='["server.js","tui.js","rpc.js","dist","src","scripts","tests","package.json","package-lock.json","tsconfig.json","README.md",".gitignore","node_modules"]'
+
+fail() {
+	printf '%s\n' "$1" >&2
+	exit 1
+}
+
+remote_head() {
+	ref=$(git ls-remote --refs "$REPO_URL" "refs/heads/$BRANCH") ||
+		fail "cannot reach $REPO_URL"
+	set -- $ref
+	[ -n "${1:-}" ] || fail "remote has no branch $BRANCH"
+	printf '%s\n' "$1"
+}
+
+local_head() {
+	git -C "$OPENCODE_UPDATER_TARGET" rev-parse HEAD 2>/dev/null || printf 'none\n'
+}
+
+action_check() {
+	latest=$(remote_head)
+	current=$(local_head)
+	if [ "$current" = "$latest" ]; then
+		status="up-to-date"
+	else
+		status="update-available"
+	fi
+	printf '{"schemaVersion":1,"status":"%s","current":"%s","latest":"%s"}\n' \
+		"$status" "$current" "$latest" >"$OPENCODE_UPDATER_CHECK_RESULT"
+}
+
+action_update() {
+	[ -n "${OPENCODE_UPDATER_STAGE:-}" ] || fail "stage directory is not set"
+	[ -n "${OPENCODE_UPDATER_LATEST:-}" ] || fail "planned commit is not set"
+
+	work=$(mktemp -d "${TMPDIR:-/tmp}/vilao-update.XXXXXX")
+	trap 'rm -rf "$work"' EXIT INT TERM
+
+	git init --quiet "$work/src" || fail "cannot create scratch checkout"
+	git -C "$work/src" remote add origin "$REPO_URL" || fail "cannot add remote"
+	git -C "$work/src" fetch --quiet --depth 1 origin "$OPENCODE_UPDATER_LATEST" ||
+		fail "cannot fetch $OPENCODE_UPDATER_LATEST"
+	git -C "$work/src" checkout --quiet --detach FETCH_HEAD || fail "cannot check out plan"
+
+	staged=$(git -C "$work/src" rev-parse HEAD)
+	[ "$staged" = "$OPENCODE_UPDATER_LATEST" ] || fail "staged commit does not match plan"
+
+	(cd "$work/src" && npm ci --ignore-scripts --no-audit --no-fund) ||
+		fail "npm ci failed for the planned commit"
+	(cd "$work/src" && npm run build) || fail "npm run build failed for the planned commit"
+
+	for entry in $ENTRYPOINTS; do
+		[ -f "$work/src/$entry" ] || fail "planned commit has no $entry"
+	done
+	[ -f "$work/src/dist/catalog.js" ] || fail "build produced no dist/catalog.js"
+
+	mkdir -p "$OPENCODE_UPDATER_STAGE" || fail "cannot create stage"
+	for path in server.js tui.js rpc.js dist src scripts tests; do
+		cp -R "$work/src/$path" "$OPENCODE_UPDATER_STAGE/$path" ||
+			fail "cannot stage $path"
+	done
+	for path in package.json package-lock.json tsconfig.json README.md .gitignore; do
+		cp "$work/src/$path" "$OPENCODE_UPDATER_STAGE/$path" || fail "cannot stage $path"
+	done
+
+	# Installed separately so the staged tree carries real directories, not the
+	# symlinks npm creates in node_modules/.bin.
+	(cd "$OPENCODE_UPDATER_STAGE" && npm ci --ignore-scripts --no-bin-links --no-audit --no-fund) ||
+		fail "staged npm ci failed"
+
+	printf '{"schemaVersion":2,"planSha256":"%s","paths":%s}\n' \
+		"$OPENCODE_UPDATER_PLAN_SHA256" "$MANIFEST_PATHS" >"$OPENCODE_UPDATER_MANIFEST"
+}
+
+action_healthcheck() {
+	[ -n "${OPENCODE_UPDATER_STAGE:-}" ] || fail "stage directory is not set"
+	[ -d "$OPENCODE_UPDATER_STAGE" ] || fail "stage directory is missing"
+
+	for entry in $ENTRYPOINTS; do
+		node --check "$OPENCODE_UPDATER_STAGE/$entry" ||
+			fail "staged $entry does not parse"
+	done
+
+	(cd "$OPENCODE_UPDATER_STAGE" &&
+		node -e "import('./dist/catalog.js').then((m)=>{ if(m.DEFAULT_CONTEXT!==512000) throw new Error('unexpected DEFAULT_CONTEXT: '+m.DEFAULT_CONTEXT); if(m.DEFAULT_OUTPUT!==64000) throw new Error('unexpected DEFAULT_OUTPUT: '+m.DEFAULT_OUTPUT); })" ) ||
+		fail "staged dist/catalog.js does not load with the expected defaults"
+
+	(cd "$OPENCODE_UPDATER_STAGE" &&
+		node -e "import('@opentui/solid').catch(()=>process.exit(1))" ) ||
+		fail "staged dependencies do not resolve @opentui/solid"
+
+	if [ -d "$OPENCODE_UPDATER_STAGE/node_modules/.bin" ]; then
+		found=$(find "$OPENCODE_UPDATER_STAGE/node_modules/.bin" -type l | head -n 1)
+		[ -z "$found" ] || fail "staged tree contains a symlink: $found"
+	fi
+}
+
+case "${1:-}" in
+check) action_check ;;
+update) action_update ;;
+healthcheck) action_healthcheck ;;
+*)
+	fail "usage: component-updater check|update|healthcheck"
+	;;
+esac
